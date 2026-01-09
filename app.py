@@ -8,7 +8,6 @@ from flask_socketio import SocketIO, emit
 
 app = Flask(__name__)
 app.secret_key = "clave_segura_123"
-# Configuración simplificada para evitar errores de contexto
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 
 game = {
@@ -30,12 +29,29 @@ HTML_INDEX = """
     <title>¿Quién es el Impostor?</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
     <style>
-        body { font-family: sans-serif; background: #0b0d17; color: white; text-align: center; padding: 20px; }
-        .box { background: #1c1f33; padding: 20px; border-radius: 15px; max-width: 320px; margin: auto; border: 1px solid #333; }
+        body { font-family: sans-serif; background: #0b0d17; color: white; text-align: center; padding: 20px; margin: 0; min-height: 100vh; position: relative; }
+        .box { background: #1c1f33; padding: 20px; border-radius: 15px; max-width: 320px; margin: 40px auto; border: 1px solid #333; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
         .btn { background: #ff4b2b; color: white; border: none; padding: 12px; border-radius: 5px; width: 100%; cursor: pointer; margin-top: 10px; font-weight: bold; }
+        
+        /* Botón Retirarse abajo a la izquierda */
+        .btn-exit { 
+            position: fixed; 
+            bottom: 20px; 
+            left: 20px; 
+            background: rgba(255, 255, 255, 0.1); 
+            color: #aaa; 
+            border: 1px solid #444; 
+            padding: 8px 15px; 
+            border-radius: 20px; 
+            font-size: 13px; 
+            cursor: pointer;
+            transition: 0.3s;
+        }
+        .btn-exit:hover { background: #ff4b2b; color: white; border-color: #ff4b2b; }
+
         .hidden { display: none; }
         #lista { text-align: left; background: #2a2e45; padding: 10px; border-radius: 5px; margin: 15px 0; }
-        input { width: 85%; padding: 10px; margin-bottom: 10px; border-radius: 5px; border: none; }
+        input { width: 85%; padding: 10px; margin-bottom: 10px; border-radius: 5px; border: none; background: #2a2e45; color: white; }
     </style>
 </head>
 <body>
@@ -44,22 +60,22 @@ HTML_INDEX = """
         
         <div id="sec-off">
             <p style="color: #ffcc00; font-weight: bold;">SALA CERRADA</p>
-            <p>El anfitrión aún no ha activado el juego.</p>
+            <p>Esperando al anfitrión...</p>
         </div>
 
         <div id="sec-admin" class="hidden">
             <p style="color: #00ff88;">🔓 MODO JEFE ACTIVO</p>
             <button class="btn" style="background:#00ff88; color:black;" id="btn-on" onclick="encender()">ENCENDER APP</button>
-            <hr>
+            <hr style="border: 0.1px solid #333; margin: 15px 0;">
         </div>
 
         <div id="sec-registro" class="hidden">
-            <input type="text" id="nombre" placeholder="Tu Apodo...">
+            <input type="text" id="nombre" placeholder="Tu Apodo..." autocomplete="off">
             <button class="btn" onclick="unirse()">ENTRAR AL JUEGO</button>
         </div>
 
         <div id="sec-lobby" class="hidden">
-            <h3>Esperando inicio...</h3>
+            <h3>Lista de Espera:</h3>
             <div id="lista"></div>
             <button id="btn-iniciar" class="btn hidden" onclick="iniciar()">INICIAR PARTIDA</button>
         </div>
@@ -69,6 +85,8 @@ HTML_INDEX = """
             <button id="btn-reset" class="btn hidden" onclick="reset()">NUEVA PARTIDA</button>
         </div>
     </div>
+
+    <button id="exit-game" class="btn-exit" onclick="location.reload()">✖ Salir</button>
 
     <script>
         const socket = io();
@@ -158,6 +176,12 @@ def inicio():
 def volver():
     if request.sid == game["admin_sid"]:
         socketio.emit('limpiar')
+
+@socketio.on('disconnect')
+def disconnect():
+    if request.sid in game["jugadores"]:
+        del game["jugadores"][request.sid]
+        actualizar()
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
