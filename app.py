@@ -1,19 +1,22 @@
+import eventlet
+eventlet.monkey_patch()
+
 import os
 import random
 from flask import Flask, render_template_string, request
 from flask_socketio import SocketIO, emit
 
 app = Flask(__name__)
-app.secret_key = "secret_key_123"
-# Volvemos a la configuración simple que te funcionaba antes
-socketio = SocketIO(app, cors_allowed_origins="*")
+app.secret_key = "clave_segura_123"
+# Configuración simplificada para evitar errores de contexto
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 
 game = {
     "admin_sid": None,
     "jugadores": {}, 
     "impostor_sid": None,
     "palabra": "",
-    "encendido": False # Esta es la variable que ahora sí se queda guardada
+    "encendido": False 
 }
 
 PALABRAS = ["Arepa", "Sifrino", "Chamo", "Monitor", "Teclado", "Cerveza", "Plátano", "Metro", "Hallaca", "Papelón"]
@@ -28,10 +31,11 @@ HTML_INDEX = """
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
     <style>
         body { font-family: sans-serif; background: #0b0d17; color: white; text-align: center; padding: 20px; }
-        .box { background: #1c1f33; padding: 20px; border-radius: 15px; max-width: 300px; margin: auto; }
+        .box { background: #1c1f33; padding: 20px; border-radius: 15px; max-width: 320px; margin: auto; border: 1px solid #333; }
         .btn { background: #ff4b2b; color: white; border: none; padding: 12px; border-radius: 5px; width: 100%; cursor: pointer; margin-top: 10px; font-weight: bold; }
         .hidden { display: none; }
-        #lista { text-align: left; background: #2a2e45; padding: 10px; border-radius: 5px; margin: 10px 0; }
+        #lista { text-align: left; background: #2a2e45; padding: 10px; border-radius: 5px; margin: 15px 0; }
+        input { width: 85%; padding: 10px; margin-bottom: 10px; border-radius: 5px; border: none; }
     </style>
 </head>
 <body>
@@ -39,28 +43,29 @@ HTML_INDEX = """
         <h1>¿QUIÉN ES EL IMPOSTOR?</h1>
         
         <div id="sec-off">
-            <p style="color: #ffcc00;">SALA CERRADA</p>
-            <p>Esperando al anfitrión...</p>
+            <p style="color: #ffcc00; font-weight: bold;">SALA CERRADA</p>
+            <p>El anfitrión aún no ha activado el juego.</p>
         </div>
 
         <div id="sec-admin" class="hidden">
+            <p style="color: #00ff88;">🔓 MODO JEFE ACTIVO</p>
             <button class="btn" style="background:#00ff88; color:black;" id="btn-on" onclick="encender()">ENCENDER APP</button>
             <hr>
         </div>
 
         <div id="sec-registro" class="hidden">
-            <input type="text" id="nombre" placeholder="Tu nombre..." style="width:80%; padding:10px; margin-bottom:10px;">
-            <button class="btn" onclick="unirse()">ENTRAR</button>
+            <input type="text" id="nombre" placeholder="Tu Apodo...">
+            <button class="btn" onclick="unirse()">ENTRAR AL JUEGO</button>
         </div>
 
         <div id="sec-lobby" class="hidden">
-            <h3>Jugadores:</h3>
+            <h3>Esperando inicio...</h3>
             <div id="lista"></div>
-            <button id="btn-iniciar" class="btn hidden" onclick="iniciar()">INICIAR JUEGO</button>
+            <button id="btn-iniciar" class="btn hidden" onclick="iniciar()">INICIAR PARTIDA</button>
         </div>
 
         <div id="sec-juego" class="hidden">
-            <div id="resultado" style="font-size: 20px; margin: 20px 0;"></div>
+            <div id="resultado" style="font-size: 22px; margin: 20px 0; font-weight: bold;"></div>
             <button id="btn-reset" class="btn hidden" onclick="reset()">NUEVA PARTIDA</button>
         </div>
     </div>
@@ -92,14 +97,15 @@ HTML_INDEX = """
         socket.on('lista_lobby', (data) => {
             document.getElementById('sec-registro').classList.add('hidden');
             document.getElementById('sec-lobby').classList.remove('hidden');
-            document.getElementById('lista').innerHTML = data.jugadores.join('<br>');
+            document.getElementById('lista').innerHTML = data.jugadores.map(j => '• ' + j).join('<br>');
             if(data.soy_admin) document.getElementById('btn-iniciar').classList.remove('hidden');
         });
 
         socket.on('repartir_roles', (data) => {
             document.getElementById('sec-lobby').classList.add('hidden');
             document.getElementById('sec-juego').classList.remove('hidden');
-            document.getElementById('resultado').innerHTML = data.rol === 'impostor' ? 'ERES EL IMPOSTOR' : 'Palabra: ' + data.palabra;
+            const res = document.getElementById('resultado');
+            res.innerHTML = data.rol === 'impostor' ? '<span style="color:red">ERES EL IMPOSTOR</span>' : 'Tu Palabra: <br><span style="color:#00ff88">' + data.palabra + '</span>';
             if(isAdmin) document.getElementById('btn-reset').classList.remove('hidden');
         });
 
@@ -112,9 +118,12 @@ HTML_INDEX = """
 </html>
 """
 
+@app.route('/')
+def index():
+    return render_template_string(HTML_INDEX)
+
 @socketio.on('connect')
 def connect():
-    # Cuando alguien entra, le decimos si ya está encendido o no
     emit('estado', {"encendido": game["encendido"]})
 
 @socketio.on('activar_servidor')
@@ -138,6 +147,7 @@ def actualizar():
 def inicio():
     if request.sid != game["admin_sid"]: return
     sids = list(game["jugadores"].keys())
+    if len(sids) < 2: return
     game["impostor_sid"] = random.choice(sids)
     game["palabra"] = random.choice(PALABRAS)
     for sid in sids:
@@ -151,5 +161,4 @@ def volver():
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
-    # Usamos la forma de arranque que NO te daba error antes
     socketio.run(app, host='0.0.0.0', port=port)
