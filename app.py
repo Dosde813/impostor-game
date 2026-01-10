@@ -7,33 +7,36 @@ from flask import Flask, render_template_string, request
 from flask_socketio import SocketIO, emit
 
 app = Flask(__name__)
-app.secret_key = "impostor_elite_v2_5_externo"
+app.secret_key = "impostor_elite_final_v26"
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 
-# --- CARGA DINÁMICA DE PALABRAS ---
+# --- CARGA DEL ARCHIVO DE PALABRAS ---
 DICCIONARIO_TOTAL = {}
 
 def cargar_palabras():
     global DICCIONARIO_TOTAL
     dict_temp = {}
-    try:
-        # Intentamos leer el archivo palabras.txt
-        with open('palabras.txt', 'r', encoding='utf-8') as f:
-            for linea in f:
-                if ":" in linea:
-                    palabra, pista = linea.strip().split(":")
-                    dict_temp[palabra] = pista
-        if dict_temp:
-            DICCIONARIO_TOTAL = dict_temp
-            print(f"✅ Éxito: {len(DICCIONARIO_TOTAL)} palabras cargadas.")
-        else:
-            raise ValueError("El archivo está vacío")
-    except Exception as e:
-        # Si el archivo no existe o falla, carga este mini-respaldo para que el juego no muera
-        print(f"⚠️ Error cargando archivo: {e}. Usando respaldo.")
-        DICCIONARIO_TOTAL = {"Error": "Archivo no encontrado", "Avisar": "Al Administrador"}
+    path_archivo = 'palabras.txt' # Asegúrate que el nombre sea exacto
+    
+    if os.path.exists(path_archivo):
+        try:
+            with open(path_archivo, 'r', encoding='utf-8') as f:
+                for linea in f:
+                    if ":" in linea:
+                        p, pst = linea.strip().split(":", 1)
+                        dict_temp[p] = pst
+            if dict_temp:
+                DICCIONARIO_TOTAL = dict_temp
+                print(f"✅ ÉXITO: Se cargaron {len(DICCIONARIO_TOTAL)} palabras desde el archivo.")
+            else:
+                print("⚠️ ERROR: El archivo palabras.txt está vacío.")
+        except Exception as e:
+            print(f"⚠️ ERROR AL LEER: {e}")
+    else:
+        print("❌ ERROR CRÍTICO: No se encontró 'palabras.txt' en la carpeta.")
+        # Respaldo de emergencia por si el archivo no está
+        DICCIONARIO_TOTAL = {"Error": "No se encontro el archivo .txt", "Avisar": "Al Administrador"}
 
-# Cargar al iniciar
 cargar_palabras()
 
 game = {
@@ -49,14 +52,14 @@ game = {
     "historial_impostores": [] 
 }
 
-# (El HTML es exactamente el mismo de la v2.4, lo mantengo intacto)
+# --- EL HTML (Página principal) ---
 HTML_INDEX = """
 <!DOCTYPE html>
 <html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Impostor Elite v2.5</title>
+    <title>Impostor Elite v2.6</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
     <style>
         :root { --bg: #050505; --card: #121212; --primary: #a855f7; --accent: #22d3ee; --text: #f8fafc; }
@@ -76,7 +79,7 @@ HTML_INDEX = """
 </head>
 <body>
     <div class="box">
-        <h2>ELITE V2.5</h2>
+        <h2>ELITE V2.6</h2>
         <div id="sec-off"><p style="color:#ef4444; font-weight:bold;">SALA CERRADA</p></div>
         <div id="sec-admin" class="hidden">
             <button class="btn btn-admin" onclick="socket.emit('activar')">ENCENDER</button>
@@ -106,16 +109,16 @@ HTML_INDEX = """
     <script>
         const socket = io();
         const isAdmin = window.location.search.includes('admin=true');
-        let miToken = localStorage.getItem('elite_tk_v25');
-        let miNombre = localStorage.getItem('elite_nm_v25');
+        let miToken = localStorage.getItem('elite_tk_v26');
+        let miNombre = localStorage.getItem('elite_nm_v26');
         if(isAdmin) document.getElementById('sec-admin').classList.remove('hidden');
         function registrar() {
             const n = document.getElementById('nombre').value.trim();
             if(n) {
                 miNombre = n;
                 miToken = 'tk_' + Math.random().toString(36).substr(2, 9);
-                localStorage.setItem('elite_tk_v25', miToken);
-                localStorage.setItem('elite_nm_v25', miNombre);
+                localStorage.setItem('elite_tk_v26', miToken);
+                localStorage.setItem('elite_nm_v26', miNombre);
                 socket.emit('reconectar', {token: miToken, nombre: miNombre});
             }
         }
@@ -166,7 +169,10 @@ HTML_INDEX = """
 </html>
 """
 
-# --- LÓGICA DE SOCKETS (Mantiene todo lo definido antes) ---
+# --- RUTAS ---
+@app.route('/')
+def home():
+    return render_template_string(HTML_INDEX)
 
 @socketio.on('pedir_estado')
 def pedir_estado():
@@ -190,8 +196,6 @@ def handle_reconectar(data):
         else:
             nombres = [j['nombre'] for j in game['jugadores'].values()]
             socketio.emit('pantalla_lobby', {'nombres': nombres, 'ultimo_res': game['ultimo_resultado']})
-    else:
-        emit('estado_servidor', {'encendido': True, 'estado': game['estado']})
 
 @socketio.on('iniciar')
 def iniciar():
@@ -199,7 +203,6 @@ def iniciar():
     game['estado'] = "juego"
     game['roles'] = {}
     
-    # 1. Rotación de Palabras (Ahora lee del diccionario cargado del archivo)
     pool = [p for p in DICCIONARIO_TOTAL.keys() if p not in game['historial_palabras']]
     if not pool:
         game['historial_palabras'] = []
@@ -208,7 +211,6 @@ def iniciar():
     game['historial_palabras'].append(game['palabra_actual'])
     game['pista_actual'] = DICCIONARIO_TOTAL[game['palabra_actual']]
     
-    # 2. SISTEMA MÍSTICO (Pesos)
     tokens = list(game['jugadores'].keys())
     nombres_para_sorteo, pesos = [], []
     for tk in tokens:
@@ -231,7 +233,6 @@ def iniciar():
 
     socketio.emit('estado_servidor', {'encendido': True, 'estado': 'juego'})
 
-    # 3. Asignar Roles
     for tk in tokens:
         nombre = game['jugadores'][tk]['nombre']
         if tk == impostor_token:
@@ -260,4 +261,5 @@ def cerrar():
     socketio.emit('estado_servidor', {'encendido': False, 'estado': 'lobby'})
 
 if __name__ == '__main__':
-    socketio.run(app, host='0.0.0.0', port=int(os.environ.get('PORT', 10000)))
+    port = int(os.environ.get('PORT', 5000))
+    socketio.run(app, host='0.0.0.0', port=port)
