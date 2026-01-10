@@ -7,7 +7,7 @@ from flask import Flask, render_template_string, request
 from flask_socketio import SocketIO, emit
 
 app = Flask(__name__)
-app.secret_key = "impostor_elite_final_v26"
+app.secret_key = "impostor_elite_v29_final"
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 
 # --- CARGA DEL ARCHIVO DE PALABRAS ---
@@ -16,8 +16,7 @@ DICCIONARIO_TOTAL = {}
 def cargar_palabras():
     global DICCIONARIO_TOTAL
     dict_temp = {}
-    path_archivo = 'palabras.txt' # Asegúrate que el nombre sea exacto
-    
+    path_archivo = 'palabras.txt'
     if os.path.exists(path_archivo):
         try:
             with open(path_archivo, 'r', encoding='utf-8') as f:
@@ -27,15 +26,10 @@ def cargar_palabras():
                         dict_temp[p] = pst
             if dict_temp:
                 DICCIONARIO_TOTAL = dict_temp
-                print(f"✅ ÉXITO: Se cargaron {len(DICCIONARIO_TOTAL)} palabras desde el archivo.")
-            else:
-                print("⚠️ ERROR: El archivo palabras.txt está vacío.")
-        except Exception as e:
-            print(f"⚠️ ERROR AL LEER: {e}")
+                print(f"✅ ÉXITO: {len(DICCIONARIO_TOTAL)} palabras cargadas.")
+        except Exception as e: print(f"⚠️ ERROR: {e}")
     else:
-        print("❌ ERROR CRÍTICO: No se encontró 'palabras.txt' en la carpeta.")
-        # Respaldo de emergencia por si el archivo no está
-        DICCIONARIO_TOTAL = {"Error": "No se encontro el archivo .txt", "Avisar": "Al Administrador"}
+        DICCIONARIO_TOTAL = {"Error": "Sin archivo .txt", "Avisar": "Admin"}
 
 cargar_palabras()
 
@@ -52,14 +46,13 @@ game = {
     "historial_impostores": [] 
 }
 
-# --- EL HTML (Página principal) ---
 HTML_INDEX = """
 <!DOCTYPE html>
 <html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Impostor Elite v2.6</title>
+    <title>Impostor Elite v2.9</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
     <style>
         :root { --bg: #050505; --card: #121212; --primary: #a855f7; --accent: #22d3ee; --text: #f8fafc; }
@@ -79,19 +72,24 @@ HTML_INDEX = """
 </head>
 <body>
     <div class="box">
-        <h2>ELITE V2.6</h2>
-        <div id="sec-off"><p style="color:#ef4444; font-weight:bold;">SALA CERRADA</p></div>
+        <h2>ELITE V2.9</h2>
+        
         <div id="sec-admin" class="hidden">
-            <button class="btn btn-admin" onclick="socket.emit('activar')">ENCENDER</button>
-            <button class="btn btn-admin" style="border-color:#ef4444; color:#ef4444;" onclick="socket.emit('cerrar_total')">APAGAR</button>
+            <button id="btn-on" class="btn btn-admin" onclick="socket.emit('activar')">ENCENDER SERVIDOR</button>
+            <button id="btn-off" class="btn btn-admin hidden" style="border-color:#ef4444; color:#ef4444;" onclick="socket.emit('cerrar_total')">CERRAR SALA (RESET)</button>
         </div>
+
+        <div id="sec-off"><p style="color:#ef4444; font-weight:bold;">SALA CERRADA</p></div>
+        
         <div id="sec-espera" class="hidden">
-            <div class="waiting-msg">PARTIDA EN CURSO<br><br><span style="font-size:11px; color:#aaa;">Espera a que termine para unirte...</span></div>
+            <div class="waiting-msg">PARTIDA EN CURSO<br><br><span style="font-size:11px; color:#aaa;">Espera a que termine...</span></div>
         </div>
+
         <div id="sec-reg" class="hidden">
             <input type="text" id="nombre" placeholder="TU NOMBRE">
-            <button class="btn" onclick="registrar()">UNIRSE</button>
+            <button class="btn" onclick="registrar()">ENTRAR A JUGAR</button>
         </div>
+
         <div id="sec-lobby" class="hidden">
             <p style="color:var(--accent); font-size:13px; font-weight:bold;">LOBBY</p>
             <div id="lista"></div>
@@ -100,44 +98,66 @@ HTML_INDEX = """
                 <p id="res-txt" style="margin:5px 0 0 0; font-size:14px;"></p>
             </div>
         </div>
+
         <div id="sec-juego" class="hidden">
             <div id="rol-display" style="font-size:22px; font-weight:bold; margin:20px 0;"></div>
             <p id="pista-display" style="color:var(--accent); font-size:18px;"></p>
             <button id="btn-fin" class="btn hidden" style="background:#eab308; color:black;" onclick="socket.emit('finalizar')">REVELAR IMPOSTOR</button>
         </div>
     </div>
+
     <script>
         const socket = io();
         const isAdmin = window.location.search.includes('admin=true');
-        let miToken = localStorage.getItem('elite_tk_v26');
-        let miNombre = localStorage.getItem('elite_nm_v26');
+        
+        // Función para obtener datos locales actualizados
+        const getMiToken = () => localStorage.getItem('elite_tk_v29');
+        const getMiNombre = () => localStorage.getItem('elite_nm_v29');
+
         if(isAdmin) document.getElementById('sec-admin').classList.remove('hidden');
+
         function registrar() {
             const n = document.getElementById('nombre').value.trim();
             if(n) {
-                miNombre = n;
-                miToken = 'tk_' + Math.random().toString(36).substr(2, 9);
-                localStorage.setItem('elite_tk_v26', miToken);
-                localStorage.setItem('elite_nm_v26', miNombre);
-                socket.emit('reconectar', {token: miToken, nombre: miNombre});
+                const tk = 'tk_' + Math.random().toString(36).substr(2, 9);
+                localStorage.setItem('elite_tk_v29', tk);
+                localStorage.setItem('elite_nm_v29', n);
+                socket.emit('reconectar', {token: tk, nombre: n});
             }
         }
-        socket.on('connect', () => {
-            if(miToken) socket.emit('reconectar', {token: miToken, nombre: miNombre});
-            else socket.emit('pedir_estado');
+
+        socket.on('expulsar_todos', () => {
+            // Se borra el nombre y token de TODO el mundo
+            localStorage.removeItem('elite_tk_v29');
+            localStorage.removeItem('elite_nm_v29');
+            
+            // Forzamos que la página vuelva a pedir el estado inicial
+            location.reload(); 
         });
+
         socket.on('estado_servidor', (data) => {
             document.querySelectorAll('.box > div:not(#sec-admin)').forEach(d => d.classList.add('hidden'));
-            if(!data.encendido) { document.getElementById('sec-off').classList.remove('hidden'); }
-            else {
-                if(!miNombre) {
+            
+            if(isAdmin) {
+                document.getElementById('btn-on').classList.toggle('hidden', data.encendido);
+                document.getElementById('btn-off').classList.toggle('hidden', !data.encendido);
+            }
+
+            if(!data.encendido) {
+                document.getElementById('sec-off').classList.remove('hidden');
+            } else {
+                let nom = getMiNombre();
+                if(!nom) {
                     if(data.estado === 'juego') document.getElementById('sec-espera').classList.remove('hidden');
                     else document.getElementById('sec-reg').classList.remove('hidden');
-                } else { socket.emit('reconectar', {token: miToken, nombre: miNombre}); }
+                } else {
+                    socket.emit('reconectar', {token: getMiToken(), nombre: nom});
+                }
             }
         });
+
         socket.on('pantalla_lobby', (data) => {
-            if(!miNombre) return;
+            if(!getMiNombre()) return;
             mostrarSeccion('sec-lobby');
             document.getElementById('lista').innerHTML = data.nombres.map(n => '• ' + n).join('<br>');
             if(isAdmin) document.getElementById('btn-iniciar').classList.remove('hidden');
@@ -146,8 +166,9 @@ HTML_INDEX = """
                 document.getElementById('res-txt').innerHTML = "Impostor: <b style='color:#ef4444'>" + data.ultimo_res.nombre + "</b><br>Palabra: <b>" + data.ultimo_res.palabra + "</b>";
             }
         });
+
         socket.on('ver_rol', (data) => {
-            if(!miNombre) return; 
+            if(!getMiNombre()) return; 
             mostrarSeccion('sec-juego');
             const res = document.getElementById('rol-display');
             const pst = document.getElementById('pista-display');
@@ -160,19 +181,27 @@ HTML_INDEX = """
             }
             if(isAdmin) document.getElementById('btn-fin').classList.remove('hidden');
         });
+
         function mostrarSeccion(id) {
             document.querySelectorAll('.box > div:not(#sec-admin)').forEach(d => d.classList.add('hidden'));
             document.getElementById(id).classList.remove('hidden');
         }
+
+        socket.on('connect', () => {
+            let tk = getMiToken();
+            let nm = getMiNombre();
+            if(tk && nm) socket.emit('reconectar', {token: tk, nombre: nm});
+            else socket.emit('pedir_estado');
+        });
     </script>
 </body>
 </html>
 """
 
-# --- RUTAS ---
+# --- LÓGICA DE SOCKETIO (Rutas) ---
+
 @app.route('/')
-def home():
-    return render_template_string(HTML_INDEX)
+def home(): return render_template_string(HTML_INDEX)
 
 @socketio.on('pedir_estado')
 def pedir_estado():
@@ -202,7 +231,6 @@ def iniciar():
     if len(game['jugadores']) < 2: return
     game['estado'] = "juego"
     game['roles'] = {}
-    
     pool = [p for p in DICCIONARIO_TOTAL.keys() if p not in game['historial_palabras']]
     if not pool:
         game['historial_palabras'] = []
@@ -210,39 +238,33 @@ def iniciar():
     game['palabra_actual'] = random.choice(pool)
     game['historial_palabras'].append(game['palabra_actual'])
     game['pista_actual'] = DICCIONARIO_TOTAL[game['palabra_actual']]
-    
     tokens = list(game['jugadores'].keys())
-    nombres_para_sorteo, pesos = [], []
+    
+    # Sorteo con tickets
+    nombres_sorteo, pesos = [], []
     for tk in tokens:
-        nombre = game['jugadores'][tk]['nombre']
-        if nombre not in game['tickets']: game['tickets'][nombre] = 10.0
+        nom = game['jugadores'][tk]['nombre']
+        if nom not in game['tickets']: game['tickets'][nom] = 10.0
         racha = 0
         for imp in reversed(game['historial_impostores']):
-            if imp == nombre: racha += 1
+            if imp == nom: racha += 1
             else: break
-        if racha == 0: peso = game['tickets'][nombre]
-        elif racha == 1: peso = 1.0
-        elif racha == 2: peso = 0.1
-        else: peso = 0.01
-        nombres_para_sorteo.append(tk)
+        peso = game['tickets'][nom] if racha == 0 else (1.0 if racha == 1 else 0.1)
+        nombres_sorteo.append(tk)
         pesos.append(peso)
 
-    impostor_token = random.choices(nombres_para_sorteo, weights=pesos, k=1)[0]
-    nombre_impostor = game['jugadores'][impostor_token]['nombre']
-    game['historial_impostores'].append(nombre_impostor)
+    impostor_tk = random.choices(nombres_sorteo, weights=pesos, k=1)[0]
+    nombre_imp = game['jugadores'][impostor_tk]['nombre']
+    game['historial_impostores'].append(nombre_imp)
 
     socketio.emit('estado_servidor', {'encendido': True, 'estado': 'juego'})
-
     for tk in tokens:
-        nombre = game['jugadores'][tk]['nombre']
-        if tk == impostor_token:
-            rol = 'impostor'
-            game['tickets'][nombre] = 5.0
-        else:
-            rol = 'civil'
-            game['tickets'][nombre] += 5.0
+        nom = game['jugadores'][tk]['nombre']
+        rol = 'impostor' if tk == impostor_tk else 'civil'
+        if rol == 'impostor': game['tickets'][nom] = 5.0
+        else: game['tickets'][nom] += 5.0
         info = {'rol': rol, 'palabra': game['palabra_actual'], 'pista': game['pista_actual']}
-        game['roles'][nombre] = info
+        game['roles'][nom] = info
         socketio.emit('ver_rol', info, room=game['jugadores'][tk]['sid'])
 
 @socketio.on('finalizar')
@@ -257,8 +279,15 @@ def finalizar():
 
 @socketio.on('cerrar_total')
 def cerrar():
-    game.update({"encendido": False, "estado": "lobby", "jugadores": {}, "roles": {}, "ultimo_resultado": None, "tickets": {}, "historial_impostores": []})
-    socketio.emit('estado_servidor', {'encendido': False, 'estado': 'lobby'})
+    # 1. Borrado masivo
+    socketio.emit('expulsar_todos')
+    
+    # 2. Reset del servidor
+    game.update({
+        "encendido": False, "estado": "lobby", "jugadores": {}, 
+        "roles": {}, "ultimo_resultado": None, "tickets": {}, 
+        "historial_impostores": [], "historial_palabras": []
+    })
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
