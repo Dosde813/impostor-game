@@ -8,11 +8,12 @@ from flask_socketio import SocketIO, emit
 
 app = Flask(__name__)
 app.secret_key = "clave_segura_123"
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
+# Aumentamos el tiempo de espera para que no desconecte a gente en WhatsApp
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet', ping_timeout=60, ping_interval=25)
 
 game = {
     "admin_sid": None,
-    "jugadores": {}, 
+    "jugadores": {}, # Diccionario: {nombre: sid}
     "impostor_sid": None,
     "palabra": "",
     "pista": "",
@@ -39,16 +40,17 @@ HTML_INDEX = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Impostor</title>
+    <title>Impostor PRO</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
     <style>
         body { font-family: sans-serif; background: #0b0d17; color: white; text-align: center; padding: 20px; margin: 0; }
         .box { background: #1c1f33; padding: 20px; border-radius: 15px; max-width: 320px; margin: 40px auto; border: 1px solid #333; }
         .btn { background: #ff4b2b; color: white; border: none; padding: 12px; border-radius: 5px; width: 100%; cursor: pointer; margin-top: 10px; font-weight: bold; }
-        .btn-exit { position: fixed; bottom: 20px; left: 20px; background: rgba(255, 255, 255, 0.1); color: #aaa; border: 1px solid #444; padding: 8px 15px; border-radius: 20px; font-size: 13px; cursor: pointer; }
+        .btn-exit { position: fixed; bottom: 20px; left: 20px; background: #444; color: white; border: none; padding: 8px 15px; border-radius: 20px; font-size: 13px; }
         .hidden { display: none; }
-        #lista { text-align: left; background: #2a2e45; padding: 10px; border-radius: 5px; margin: 15px 0; }
+        #lista { text-align: left; background: #2a2e45; padding: 10px; border-radius: 5px; margin: 15px 0; max-height: 200px; overflow-y: auto; }
         input { width: 85%; padding: 10px; margin-bottom: 10px; border-radius: 5px; border: none; background: #2a2e45; color: white; }
+        .status-dot { height: 10px; width: 10px; background-color: #00ff88; border-radius: 50%; display: inline-block; margin-right: 5px; }
     </style>
 </head>
 <body>
@@ -69,35 +71,42 @@ HTML_INDEX = """
         </div>
 
         <div id="sec-lobby" class="hidden">
-            <h3>Lobby</h3>
+            <h3>Jugadores (<span id="count">0</span>)</h3>
             <div id="lista"></div>
             <button id="btn-iniciar" class="btn hidden" style="background:#00ff88; color:black;" onclick="socket.emit('dar_inicio')">INICIAR PARTIDA</button>
+            <p style="font-size:10px; color: #666;">Si no ves a alguien, que recargue la página.</p>
         </div>
 
         <div id="sec-juego" class="hidden">
             <div id="resultado" style="font-size: 20px; margin: 20px 0; font-weight: bold;"></div>
             <p id="pista-imp" style="color: #aaa; font-style: italic;"></p>
-            <button id="btn-finalizar" class="btn hidden" style="background:#ffcc00; color:black;" onclick="socket.emit('finalizar_partida')">FINALIZAR</button>
+            <button id="btn-finalizar" class="btn hidden" style="background:#ffcc00; color:black;" onclick="socket.emit('finalizar_partida')">FINALIZAR Y REVELAR</button>
         </div>
 
         <div id="sec-revelacion" class="hidden">
-            <h2 style="color: #ff4b2b;">FINAL</h2>
+            <h2 style="color: #ff4b2b;">PARTIDA FINALIZADA</h2>
             <p id="info-revelacion"></p>
         </div>
     </div>
 
-    <button class="btn-exit" onclick="location.reload()">✖ Salir</button>
+    <button class="btn-exit" onclick="salir()">✖ Salir del Juego</button>
 
     <script>
-        const socket = io();
+        const socket = io({ reconnection: true, reconnectionAttempts: 5 });
         const isAdmin = new URLSearchParams(window.location.search).get('admin') === 'true';
+        let miNombre = "";
         let estadoActual = "registro";
 
         if(isAdmin) document.getElementById('sec-admin').classList.remove('hidden');
 
         function unirse() {
-            const n = document.getElementById('nombre').value;
-            if(n) socket.emit('unirse_jugador', {nombre: n, es_admin: isAdmin});
+            miNombre = document.getElementById('nombre').value;
+            if(miNombre) socket.emit('unirse_jugador', {nombre: miNombre, es_admin: isAdmin});
+        }
+
+        function salir() {
+            if(miNombre) socket.emit('quitar_jugador', {nombre: miNombre});
+            location.reload();
         }
 
         socket.on('estado', (data) => {
@@ -113,7 +122,8 @@ HTML_INDEX = """
                 document.getElementById('sec-registro').classList.add('hidden');
                 document.getElementById('sec-revelacion').classList.add('hidden');
                 document.getElementById('sec-lobby').classList.remove('hidden');
-                document.getElementById('lista').innerHTML = data.jugadores.map(j => '• ' + j).join('<br>');
+                document.getElementById('count').innerText = data.jugadores.length;
+                document.getElementById('lista').innerHTML = data.jugadores.map(j => '<div><span class="status-dot"></span>' + j + '</div>').join('');
                 if(data.soy_admin) document.getElementById('btn-iniciar').classList.remove('hidden');
             }
         });
@@ -129,7 +139,7 @@ HTML_INDEX = """
                 res.innerHTML = '<span style="color:red">ERES EL IMPOSTOR</span>';
                 pst.innerHTML = "Pista: " + data.pista;
             } else {
-                res.innerHTML = 'Palabra: <br><span style="color:#00ff88">' + data.palabra + '</span>';
+                res.innerHTML = 'Tu Palabra es:<br><span style="color:#00ff88; font-size:30px;">' + data.palabra + '</span>';
                 pst.innerHTML = "";
             }
             if(isAdmin) document.getElementById('btn-finalizar').classList.remove('hidden');
@@ -139,13 +149,13 @@ HTML_INDEX = """
             estadoActual = "revelacion";
             document.getElementById('sec-juego').classList.add('hidden');
             document.getElementById('sec-revelacion').classList.remove('hidden');
-            document.getElementById('info-revelacion').innerHTML = "Impostor: <b>" + data.nombre_impostor + "</b><br>Palabra: " + data.palabra;
+            document.getElementById('info-revelacion').innerHTML = "El Impostor era: <br><b style='font-size:24px; color:#ff4b2b;'>" + data.nombre_impostor + "</b><br><br>Palabra: " + data.palabra;
             
             setTimeout(() => {
                 estadoActual = "lobby";
                 document.getElementById('sec-revelacion').classList.add('hidden');
                 socket.emit('pedir_lista');
-            }, 5000);
+            }, 8000); // 8 segundos para que todos lean bien
         });
     </script>
 </body>
@@ -167,8 +177,15 @@ def activar():
 
 @socketio.on('unirse_jugador')
 def unirse(data):
-    game["jugadores"][request.sid] = data['nombre']
+    # Guardamos por NOMBRE, no por ID, para que si cambian de app no se borren
+    game["jugadores"][data['nombre']] = request.sid
     if data.get('es_admin'): game["admin_sid"] = request.sid
+    actualizar()
+
+@socketio.on('quitar_jugador')
+def quitar(data):
+    if data['nombre'] in game["jugadores"]:
+        del game["jugadores"][data['nombre']]
     actualizar()
 
 @socketio.on('pedir_lista')
@@ -176,42 +193,41 @@ def pedir_lista():
     actualizar()
 
 def actualizar():
-    nombres = list(game["jugadores"].values())
-    for sid, nombre in game["jugadores"].items():
-        socketio.emit('lista_lobby', {'jugadores': nombres, 'soy_admin': (sid == game["admin_sid"])}, room=sid)
+    nombres = list(game["jugadores"].keys())
+    socketio.emit('lista_lobby', {
+        'jugadores': nombres, 
+        'soy_admin': False # El cliente chequeará esto por URL
+    })
 
 @socketio.on('dar_inicio')
 def inicio():
-    if request.sid != game["admin_sid"] or len(game["jugadores"]) < 2: return
+    if len(game["jugadores"]) < 2: return
     game["en_partida"] = True
-    sids = list(game["jugadores"].keys())
-    game["impostor_sid"] = random.choice(sids)
+    nombres = list(game["jugadores"].keys())
+    nombre_impostor = random.choice(nombres)
     game["palabra"], game["pista"] = random.choice(list(RECURSOS.items()))
     
-    socketio.emit('repartir_roles', {
-        'impostor_sid': game["impostor_sid"], # Solo para control interno
-        'palabra': game["palabra"], 
-        'pista': game["pista"]
-    }) # Nota: Enviamos a todos, pero el JS filtra quién es quién
+    # Guardamos quién es para la revelación final
+    game["impostor_sid"] = nombre_impostor 
 
-    # Re-enviamos específicamente para asegurar roles
-    for sid in sids:
-        rol = 'impostor' if sid == game["impostor_sid"] else 'civil'
-        socketio.emit('repartir_roles', {'rol': rol, 'palabra': game["palabra"], 'pista': game["pista"]}, room=sid)
+    for nombre, sid in game["jugadores"].items():
+        rol = 'impostor' if nombre == nombre_impostor else 'civil'
+        socketio.emit('repartir_roles', {
+            'rol': rol, 
+            'palabra': game["palabra"], 
+            'pista': game["pista"]
+        }, room=sid)
 
 @socketio.on('finalizar_partida')
 def finalizar():
-    if request.sid != game["admin_sid"]: return
-    nombre_imp = game["jugadores"].get(game["impostor_sid"], "Desconocido")
-    socketio.emit('revelar_final', {'nombre_impostor': nombre_imp, 'palabra': game["palabra"]})
+    socketio.emit('revelar_final', {
+        'nombre_impostor': game["impostor_sid"], 
+        'palabra': game["palabra"]
+    })
     game["en_partida"] = False
 
-@socketio.on('disconnect')
-def disconnect():
-    if request.sid in game["jugadores"]:
-        del game["jugadores"][request.sid]
-        if not game["en_partida"]:
-            actualizar()
+# IMPORTANTE: Ya no hay función 'disconnect' que borre gente.
+# El jugador solo se va si presiona "Salir".
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
