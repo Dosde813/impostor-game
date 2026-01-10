@@ -7,12 +7,12 @@ from flask import Flask, render_template_string, request
 from flask_socketio import SocketIO, emit
 
 app = Flask(__name__)
-app.secret_key = "impostor_v6_pro"
+app.secret_key = "impostor_v7_final"
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 
 game = {
     "encendido": False,
-    "jugadores": {},  # sid: nombre
+    "jugadores": {},
     "impostor_sid": None,
     "palabra": "",
     "pista": ""
@@ -33,17 +33,16 @@ HTML_INDEX = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Impostor V6</title>
+    <title>Impostor V7</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
     <style>
-        body { font-family: sans-serif; background: #0b0d17; color: white; text-align: center; margin: 0; padding: 15px; }
+        body { font-family: sans-serif; background: #0b0d17; color: white; text-align: center; margin: 0; padding: 15px; overflow-x: hidden; }
         .box { background: #1c1f33; padding: 20px; border-radius: 20px; max-width: 320px; margin: 10px auto; border: 1px solid #444; }
         .btn { background: #ff4b2b; color: white; border: none; padding: 15px; border-radius: 10px; width: 100%; cursor: pointer; margin-top: 10px; font-weight: bold; font-size: 16px; }
-        .btn-sec { background: #555; font-size: 12px; padding: 8px; }
-        .hidden { display: none; }
+        .hidden { display: none !important; }
         #lista { text-align: left; background: #0b0d17; padding: 10px; border-radius: 10px; margin: 10px 0; border: 1px solid #333; }
         input { width: 88%; padding: 12px; margin-bottom: 10px; border-radius: 8px; border: 1px solid #444; background: #2a2e45; color: white; }
-        .modal { background: rgba(0,0,0,0.9); position: fixed; top:0; left:0; width:100%; height:100%; display:flex; align-items:center; justify-content:center; z-index:1000; }
+        .modal { background: rgba(0,0,0,0.95); position: fixed; top:0; left:0; width:100%; height:100%; display:flex; align-items:center; justify-content:center; z-index:9999; }
     </style>
 </head>
 <body>
@@ -52,12 +51,11 @@ HTML_INDEX = """
         
         <div id="sec-off">
             <p style="color:#ffcc00; font-weight:bold;">SALA CERRADA</p>
-            <p style="font-size:12px;">Espera a que el anfitrión abra la sala.</p>
         </div>
         
         <div id="sec-admin" class="hidden">
             <button id="btn-on" class="btn" style="background:#00ff88; color:#000;" onclick="socket.emit('activar')">ENCENDER SERVIDOR</button>
-            <button id="btn-kill" class="btn btn-sec hidden" onclick="socket.emit('cerrar_total')">CERRAR SALA POR COMPLETO</button>
+            <button id="btn-kill" class="btn hidden" style="background:#444; font-size:12px;" onclick="socket.emit('cerrar_total')">CERRAR SALA POR COMPLETO</button>
             <hr style="border:0.1px solid #333; margin:15px 0;">
         </div>
 
@@ -67,9 +65,8 @@ HTML_INDEX = """
         </div>
 
         <div id="sec-lobby" class="hidden">
-            <p style="color:#00ff88; font-size:12px;">✓ Conectado</p>
+            <p style="color:#00ff88; font-size:12px;">✓ En línea</p>
             <div id="lista"></div>
-            <p id="wait-msg" style="font-size:14px; color:#aaa;">Esperando inicio...</p>
             <button id="btn-iniciar" class="btn hidden" style="background:#00ff88; color:#000;" onclick="socket.emit('iniciar')">¡INICIAR PARTIDA!</button>
         </div>
 
@@ -83,7 +80,7 @@ HTML_INDEX = """
     <div id="modal-reveal" class="modal hidden">
         <div class="box" style="border:2px solid #ff4b2b;">
             <h3 style="color:#ff4b2b;">RESULTADOS</h3>
-            <p id="reveal-msg"></p>
+            <p id="reveal-msg" style="font-size:18px;"></p>
             <button class="btn" onclick="cerrarModal()">VOLVER AL LOBBY</button>
         </div>
     </div>
@@ -99,22 +96,27 @@ HTML_INDEX = """
         }
 
         function unirse() {
-            miNombre = document.getElementById('nombre').value;
-            if(miNombre) socket.emit('unirse', {nombre: miNombre});
+            const input = document.getElementById('nombre');
+            if(input.value) {
+                miNombre = input.value;
+                socket.emit('unirse', {nombre: miNombre});
+            }
         }
 
         function cerrarModal() {
             document.getElementById('modal-reveal').classList.add('hidden');
+            // Al cerrar, forzamos que se vea el lobby si ya estamos registrados
+            if(miNombre) {
+                document.getElementById('sec-lobby').classList.remove('hidden');
+                document.getElementById('sec-juego').classList.add('hidden');
+            }
         }
 
         socket.on('estado_servidor', (data) => {
             if(data.encendido) {
                 document.getElementById('sec-off').classList.add('hidden');
-                if(!miNombre) {
-                    document.getElementById('sec-reg').classList.remove('hidden');
-                }
+                if(!miNombre) document.getElementById('sec-reg').classList.remove('hidden');
             } else {
-                // Expulsión total
                 miNombre = "";
                 document.getElementById('sec-off').classList.remove('hidden');
                 document.getElementById('sec-reg').classList.add('hidden');
@@ -135,16 +137,17 @@ HTML_INDEX = """
         });
 
         socket.on('ver_rol', (data) => {
+            document.getElementById('modal-reveal').classList.add('hidden');
             document.getElementById('sec-lobby').classList.add('hidden');
             document.getElementById('sec-juego').classList.remove('hidden');
             const res = document.getElementById('rol-text');
             const pst = document.getElementById('pista-text');
             if(data.rol === 'impostor') {
                 res.innerHTML = '<span style="color:#ff4b2b">ERES EL IMPOSTOR</span>';
-                pst.innerHTML = "Tu Pista: " + data.pista;
+                pst.innerHTML = "<b>Pista:</b> " + data.pista;
             } else {
                 res.innerHTML = 'Palabra: <br><span style="color:#00ff88">' + data.palabra + '</span>';
-                pst.innerHTML = "";
+                pst.innerHTML = "¡Que no te descubran!";
             }
             if(isAdmin) document.getElementById('btn-fin').classList.remove('hidden');
         });
@@ -152,7 +155,6 @@ HTML_INDEX = """
         socket.on('reset', (data) => {
             document.getElementById('reveal-msg').innerHTML = "Impostor: <b>"+data.nombre+"</b><br>Palabra: <b>"+data.palabra+"</b>";
             document.getElementById('modal-reveal').classList.remove('hidden');
-            // El servidor enviará actualizar_lista automáticamente después
         });
     </script>
 </body>
@@ -197,8 +199,7 @@ def on_iniciar():
 def on_finalizar():
     nombre = game['jugadores'].get(game['impostor_sid'], "Desconocido")
     socketio.emit('reset', {'nombre': nombre, 'palabra': game['palabra']})
-    # Después de un pequeño delay, regresamos a todos al lobby sin pedir nombre
-    eventlet.sleep(1)
+    # Actualizar la lista para que todos vuelvan al lobby internamente
     socketio.emit('actualizar_lista', list(game['jugadores'].values()))
 
 if __name__ == '__main__':
