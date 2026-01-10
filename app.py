@@ -7,26 +7,25 @@ from flask import Flask, render_template_string, request
 from flask_socketio import SocketIO, emit
 
 app = Flask(__name__)
-app.secret_key = "impostor_v8_memoria"
+app.secret_key = "impostor_v9_stable"
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 
 game = {
     "encendido": False,
     "jugadores": {},  # sid: nombre
-    "nombres_registrados": {}, # nombre: sid (para recuperar sesión)
-    "estado": "lobby", # "lobby" o "juego"
+    "estado": "lobby",
     "impostor_sid": None,
     "palabra": "",
     "pista": ""
 }
 
 RECURSOS = {
-    "Arepa": "Se come en el desayuno o cena", "Hallaca": "Huele a navidad y lleva pabilo",
-    "Cerveza": "Bien fría en una cava con hielo", "Malta": "Bebida negra dulce muy nuestra",
-    "Tequeño": "El rey de todas las fiestas", "Empanada": "Se compra en la calle con salsa de ajo",
-    "Metro": "Transporte que siempre va full", "Béisbol": "Deporte que paraliza al país",
-    "Plátano": "Si está frito es tajada", "Chamo": "Persona joven o amigo",
-    "Sifrino": "Alguien que habla con la papa en la boca", "Moto": "Esquiva el tráfico"
+    "Arepa": "Se come en el desayuno o cena", "Hallaca": "Navidad y lleva pabilo",
+    "Cerveza": "Bien fría con mucho hielo", "Malta": "Bebida negra dulce",
+    "Tequeño": "El rey de las fiestas", "Empanada": "Fritura con salsa de ajo",
+    "Metro": "Transporte que siempre va full", "Béisbol": "Deporte con bates",
+    "Plátano": "Si está frito es tajada", "Chamo": "Un joven amigo",
+    "Sifrino": "Habla con la papa en la boca", "Moto": "Esquiva el tráfico"
 }
 
 HTML_INDEX = """
@@ -35,7 +34,7 @@ HTML_INDEX = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Impostor V8</title>
+    <title>Impostor V9</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
     <style>
         body { font-family: sans-serif; background: #0b0d17; color: white; text-align: center; margin: 0; padding: 15px; }
@@ -88,9 +87,7 @@ HTML_INDEX = """
     <script>
         const socket = io();
         const isAdmin = window.location.search.includes('admin=true');
-        
-        // RECUPERAR NOMBRE SI EXISTE EN EL NAVEGADOR
-        let miNombre = localStorage.getItem('impostor_nombre');
+        let miNombre = localStorage.getItem('impostor_v9_name') || "";
 
         if(isAdmin) document.getElementById('sec-admin').classList.remove('hidden');
 
@@ -98,29 +95,32 @@ HTML_INDEX = """
             const n = document.getElementById('nombre').value;
             if(n) {
                 miNombre = n;
-                localStorage.setItem('impostor_nombre', n);
+                localStorage.setItem('impostor_v9_name', n);
                 socket.emit('unirse', {nombre: n});
             }
         }
 
         function cerrarModal() {
             document.getElementById('modal-reveal').classList.add('hidden');
-            socket.emit('solicitar_estado'); 
+            socket.emit('ver_lobby');
         }
-
-        socket.on('connect', () => {
-            if(miNombre) socket.emit('unirse', {nombre: miNombre});
-        });
 
         socket.on('estado_servidor', (data) => {
             if(!data.encendido) {
-                localStorage.removeItem('impostor_nombre');
                 miNombre = "";
-                location.reload(); 
-                return;
+                localStorage.removeItem('impostor_v9_name');
+                document.getElementById('sec-off').classList.remove('hidden');
+                document.getElementById('sec-reg').classList.add('hidden');
+                document.getElementById('sec-lobby').classList.add('hidden');
+                document.getElementById('sec-juego').classList.add('hidden');
+            } else {
+                document.getElementById('sec-off').classList.add('hidden');
+                if(!miNombre) {
+                    document.getElementById('sec-reg').classList.remove('hidden');
+                } else {
+                    socket.emit('unirse', {nombre: miNombre});
+                }
             }
-            document.getElementById('sec-off').classList.add('hidden');
-            if(!miNombre) document.getElementById('sec-reg').classList.remove('hidden');
         });
 
         socket.on('pantalla_lobby', (data) => {
@@ -157,6 +157,14 @@ HTML_INDEX = """
 </html>
 """
 
+@app.route('/')
+def index():
+    return render_template_string(HTML_INDEX)
+
+@socketio.on('connect')
+def on_connect():
+    emit('estado_servidor', {'encendido': game['encendido']})
+
 @socketio.on('activar')
 def on_activar():
     game['encendido'] = True
@@ -164,13 +172,11 @@ def on_activar():
 
 @socketio.on('unirse')
 def on_unirse(data):
-    nombre = data['nombre']
-    game['jugadores'][request.sid] = nombre
-    # Actualizar a TODOS
+    game['jugadores'][request.sid] = data['nombre']
     socketio.emit('pantalla_lobby', {'jugadores': list(game['jugadores'].values())})
-    # Si la partida ya empezó, enviarle su rol de nuevo
     if game['estado'] == "juego":
-        enviar_rol_individual(request.sid)
+        rol = 'impostor' if request.sid == game['impostor_sid'] else 'civil'
+        emit('ver_rol', {'rol': rol, 'palabra': game['palabra'], 'pista': game['pista']})
 
 @socketio.on('iniciar')
 def on_iniciar():
@@ -180,32 +186,24 @@ def on_iniciar():
     game['impostor_sid'] = random.choice(sids)
     game['palabra'], game['pista'] = random.choice(list(RECURSOS.items()))
     for sid in sids:
-        enviar_rol_individual(sid)
+        rol = 'impostor' if sid == game['impostor_sid'] else 'civil'
+        socketio.emit('ver_rol', {'rol': rol, 'palabra': game['palabra'], 'pista': game['pista']}, room=sid)
 
-def enviar_rol_individual(sid):
-    rol = 'impostor' if sid == game['impostor_sid'] else 'civil'
-    socketio.emit('ver_rol', {'rol': rol, 'palabra': game['palabra'], 'pista': game['pista']}, room=sid)
+@socketio.on('ver_lobby')
+def ver_lobby():
+    emit('pantalla_lobby', {'jugadores': list(game['jugadores'].values())})
 
 @socketio.on('finalizar')
 def on_finalizar():
     nombre = game['jugadores'].get(game['impostor_sid'], "Desconocido")
     socketio.emit('reset', {'nombre': nombre, 'palabra': game['palabra']})
     game['estado'] = "lobby"
-    # No borramos jugadores, solo regresamos al lobby
     socketio.emit('pantalla_lobby', {'jugadores': list(game['jugadores'].values())})
 
 @socketio.on('cerrar_total')
 def cerrar_total():
     game.update({"encendido": False, "jugadores": {}, "estado": "lobby"})
     socketio.emit('estado_servidor', {'encendido': False})
-
-@app.route('/')
-def index():
-    return render_template_string(HTML_INDEX)
-
-@socketio.on('connect')
-def on_connect():
-    emit('estado_servidor', {'encendido': game['encendido']})
 
 if __name__ == '__main__':
     socketio.run(app, host='0.0.0.0', port=int(os.environ.get('PORT', 10000)))
