@@ -7,12 +7,13 @@ from flask import Flask, render_template_string, request
 from flask_socketio import SocketIO, emit
 
 app = Flask(__name__)
-app.secret_key = "impostor_v9_stable"
+app.secret_key = "impostor_v10_final"
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 
 game = {
     "encendido": False,
     "jugadores": {},  # sid: nombre
+    "roles_asignados": {}, # nombre: {rol, palabra, pista}
     "estado": "lobby",
     "impostor_sid": None,
     "palabra": "",
@@ -34,7 +35,7 @@ HTML_INDEX = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Impostor V9</title>
+    <title>Impostor V10</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
     <style>
         body { font-family: sans-serif; background: #0b0d17; color: white; text-align: center; margin: 0; padding: 15px; }
@@ -50,13 +51,16 @@ HTML_INDEX = """
     <div class="box">
         <h2 style="color:#ff4b2b;">IMPOSTOR</h2>
         
-        <div id="sec-off">
-            <p style="color:#ffcc00; font-weight:bold;">SALA CERRADA</p>
-        </div>
+        <div id="sec-off"><p style="color:#ffcc00; font-weight:bold;">SALA CERRADA</p></div>
         
         <div id="sec-admin" class="hidden">
             <button class="btn" style="background:#00ff88; color:#000;" onclick="socket.emit('activar')">ENCENDER SERVIDOR</button>
             <button class="btn" style="background:#444; font-size:12px;" onclick="socket.emit('cerrar_total')">CERRAR SALA</button>
+        </div>
+
+        <div id="sec-bloqueo" class="hidden">
+            <p style="color:#ff4b2b; font-weight:bold;">PARTIDA EN CURSO</p>
+            <p>Espera a que termine la ronda para poder unirte.</p>
         </div>
 
         <div id="sec-reg" class="hidden">
@@ -66,7 +70,7 @@ HTML_INDEX = """
 
         <div id="sec-lobby" class="hidden">
             <div id="lista"></div>
-            <button id="btn-iniciar" class="btn hidden" style="background:#00ff88; color:#000;" onclick="socket.emit('iniciar')">INICIAR PARTIDA</button>
+            <button id="btn-iniciar" class="btn hidden" style="background:#00ff88; color:#000;" onclick="socket.emit('iniciar')">¡INICIAR PARTIDA!</button>
         </div>
 
         <div id="sec-juego" class="hidden">
@@ -87,39 +91,39 @@ HTML_INDEX = """
     <script>
         const socket = io();
         const isAdmin = window.location.search.includes('admin=true');
-        let miNombre = localStorage.getItem('impostor_v9_name') || "";
+        let miNombre = localStorage.getItem('impostor_name_v10') || "";
 
         if(isAdmin) document.getElementById('sec-admin').classList.remove('hidden');
 
         function unirse() {
-            const n = document.getElementById('nombre').value;
+            const n = document.getElementById('nombre').value.trim();
             if(n) {
                 miNombre = n;
-                localStorage.setItem('impostor_v9_name', n);
+                localStorage.setItem('impostor_name_v10', n);
                 socket.emit('unirse', {nombre: n});
             }
         }
 
         function cerrarModal() {
             document.getElementById('modal-reveal').classList.add('hidden');
-            socket.emit('ver_lobby');
         }
 
         socket.on('estado_servidor', (data) => {
+            document.getElementById('sec-off').classList.add('hidden');
+            document.getElementById('sec-bloqueo').classList.add('hidden');
+            document.getElementById('sec-reg').classList.add('hidden');
+
             if(!data.encendido) {
-                miNombre = "";
-                localStorage.removeItem('impostor_v9_name');
                 document.getElementById('sec-off').classList.remove('hidden');
-                document.getElementById('sec-reg').classList.add('hidden');
-                document.getElementById('sec-lobby').classList.add('hidden');
-                document.getElementById('sec-juego').classList.add('hidden');
+                return;
+            }
+
+            if(data.estado === "juego" && !miNombre) {
+                document.getElementById('sec-bloqueo').classList.remove('hidden');
+            } else if(!miNombre) {
+                document.getElementById('sec-reg').classList.remove('hidden');
             } else {
-                document.getElementById('sec-off').classList.add('hidden');
-                if(!miNombre) {
-                    document.getElementById('sec-reg').classList.remove('hidden');
-                } else {
-                    socket.emit('unirse', {nombre: miNombre});
-                }
+                socket.emit('unirse', {nombre: miNombre});
             }
         });
 
@@ -127,6 +131,7 @@ HTML_INDEX = """
             if(!miNombre) return;
             document.getElementById('sec-reg').classList.add('hidden');
             document.getElementById('sec-juego').classList.add('hidden');
+            document.getElementById('sec-bloqueo').classList.add('hidden');
             document.getElementById('sec-lobby').classList.remove('hidden');
             document.getElementById('lista').innerHTML = data.jugadores.map(j => '• ' + j).join('<br>');
             if(isAdmin) document.getElementById('btn-iniciar').classList.remove('hidden');
@@ -163,47 +168,63 @@ def index():
 
 @socketio.on('connect')
 def on_connect():
-    emit('estado_servidor', {'encendido': game['encendido']})
+    emit('estado_servidor', {'encendido': game['encendido'], 'estado': game['estado']})
 
 @socketio.on('activar')
 def on_activar():
     game['encendido'] = True
-    socketio.emit('estado_servidor', {'encendido': True})
+    socketio.emit('estado_servidor', {'encendido': True, 'estado': game['estado']})
 
 @socketio.on('unirse')
 def on_unirse(data):
-    game['jugadores'][request.sid] = data['nombre']
-    socketio.emit('pantalla_lobby', {'jugadores': list(game['jugadores'].values())})
-    if game['estado'] == "juego":
-        rol = 'impostor' if request.sid == game['impostor_sid'] else 'civil'
-        emit('ver_rol', {'rol': rol, 'palabra': game['palabra'], 'pista': game['pista']})
+    nombre = data['nombre']
+    # Evitar duplicados por nombre
+    for sid, n in list(game['jugadores'].items()):
+        if n == nombre: del game['jugadores'][sid]
+    
+    game['jugadores'][request.sid] = nombre
+    
+    if game['estado'] == "lobby":
+        socketio.emit('pantalla_lobby', {'jugadores': list(set(game['jugadores'].values()))})
+    else:
+        # Si ya hay partida, le devolvemos su rol si estaba en ella
+        if nombre in game['roles_asignados']:
+            info = game['roles_asignados'][nombre]
+            emit('ver_rol', info)
+        else:
+            emit('estado_servidor', {'encendido': True, 'estado': "juego"})
 
 @socketio.on('iniciar')
 def on_iniciar():
-    sids = list(game['jugadores'].keys())
+    sids = list(game['jugadores'].items())
     if len(sids) < 2: return
     game['estado'] = "juego"
-    game['impostor_sid'] = random.choice(sids)
+    game['roles_asignados'] = {}
+    
+    impostor_sid, impostor_nombre = random.choice(sids)
     game['palabra'], game['pista'] = random.choice(list(RECURSOS.items()))
-    for sid in sids:
-        rol = 'impostor' if sid == game['impostor_sid'] else 'civil'
-        socketio.emit('ver_rol', {'rol': rol, 'palabra': game['palabra'], 'pista': game['pista']}, room=sid)
-
-@socketio.on('ver_lobby')
-def ver_lobby():
-    emit('pantalla_lobby', {'jugadores': list(game['jugadores'].values())})
+    
+    for sid, nombre in sids:
+        rol = 'impostor' if sid == impostor_sid else 'civil'
+        info = {'rol': rol, 'palabra': game['palabra'], 'pista': game['pista']}
+        game['roles_asignados'][nombre] = info
+        socketio.emit('ver_rol', info, room=sid)
 
 @socketio.on('finalizar')
 def on_finalizar():
-    nombre = game['jugadores'].get(game['impostor_sid'], "Desconocido")
-    socketio.emit('reset', {'nombre': nombre, 'palabra': game['palabra']})
+    impostor_nombre = ""
+    for n, info in game['roles_asignados'].items():
+        if info['rol'] == 'impostor': impostor_nombre = n
+    
+    socketio.emit('reset', {'nombre': impostor_nombre, 'palabra': game['palabra']})
     game['estado'] = "lobby"
-    socketio.emit('pantalla_lobby', {'jugadores': list(game['jugadores'].values())})
+    game['roles_asignados'] = {}
+    socketio.emit('pantalla_lobby', {'jugadores': list(set(game['jugadores'].values()))})
 
 @socketio.on('cerrar_total')
 def cerrar_total():
-    game.update({"encendido": False, "jugadores": {}, "estado": "lobby"})
-    socketio.emit('estado_servidor', {'encendido': False})
+    game.update({"encendido": False, "jugadores": {}, "estado": "lobby", "roles_asignados": {}})
+    socketio.emit('estado_servidor', {'encendido': False, 'estado': "lobby"})
 
 if __name__ == '__main__':
     socketio.run(app, host='0.0.0.0', port=int(os.environ.get('PORT', 10000)))
