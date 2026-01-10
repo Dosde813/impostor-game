@@ -12,7 +12,7 @@ socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 
 game = {
     "encendido": False,
-    "jugadores": {}, # sid: nombre
+    "jugadores": {},
     "impostor_sid": None,
     "palabra": "",
     "pista": ""
@@ -44,82 +44,62 @@ HTML_INDEX = """
 <body>
     <div class="box">
         <h2 style="color:#ff4b2b;">IMPOSTOR</h2>
-        
-        <div id="sec-off">
-            <p style="color:#ffcc00;">SALA CERRADA</p>
-        </div>
-        
+        <div id="sec-off"><p style="color:#ffcc00;">SALA CERRADA</p></div>
         <div id="sec-admin" class="hidden">
             <button class="btn" style="background:#00ff88; color:#000;" onclick="socket.emit('activar')">ENCENDER JUEGO</button>
-            <hr style="border:0.1px solid #333;">
         </div>
-
         <div id="sec-reg" class="hidden">
             <input type="text" id="nombre" placeholder="Tu Apodo...">
             <button class="btn" onclick="unirse()">ENTRAR AL JUEGO</button>
         </div>
-
         <div id="sec-lobby" class="hidden">
             <h3>En el Lobby:</h3>
             <div id="lista"></div>
             <button id="btn-iniciar" class="btn hidden" style="background:#00ff88; color:#000;" onclick="socket.emit('iniciar')">INICIAR PARTIDA</button>
         </div>
-
         <div id="sec-juego" class="hidden">
             <div id="rol-text" style="font-size:20px; font-weight:bold; margin:20px;"></div>
             <p id="pista-text" style="color:#aaa; font-style:italic;"></p>
             <button id="btn-fin" class="btn hidden" style="background:#ffcc00; color:#000;" onclick="socket.emit('finalizar')">REVELAR TODO</button>
         </div>
     </div>
-
     <script>
         const socket = io();
         const isAdmin = window.location.search.includes('admin=true');
-        let yaEntro = false; // LLAVE MAESTRA: Evita que la pantalla cambie sola
-
+        let yaEntro = false;
         if(isAdmin) document.getElementById('sec-admin').classList.remove('hidden');
-
         function unirse() {
             const n = document.getElementById('nombre').value;
             if(n) {
-                yaEntro = true; // El usuario dio permiso para cambiar de pantalla
+                yaEntro = true;
                 socket.emit('unirse', {nombre: n, admin: isAdmin});
                 document.getElementById('sec-reg').classList.add('hidden');
                 document.getElementById('sec-lobby').classList.remove('hidden');
             }
         }
-
         socket.on('estado_servidor', (data) => {
             if(data.encendido && !yaEntro) {
                 document.getElementById('sec-off').classList.add('hidden');
                 document.getElementById('sec-reg').classList.remove('hidden');
             }
         });
-
         socket.on('actualizar_lista', (data) => {
-            // Solo actualiza visualmente la lista si la persona ya entró al lobby
             if(yaEntro) {
                 document.getElementById('lista').innerHTML = data.map(j => '• ' + j).join('<br>');
                 if(isAdmin) document.getElementById('btn-iniciar').classList.remove('hidden');
             }
         });
-
         socket.on('ver_rol', (data) => {
             document.getElementById('sec-lobby').classList.add('hidden');
             document.getElementById('sec-juego').classList.remove('hidden');
-            const res = document.getElementById('rol-text');
-            const pst = document.getElementById('pista-text');
-            
             if(data.rol === 'impostor') {
-                res.innerHTML = '<span style="color:red">ERES EL IMPOSTOR</span>';
-                pst.innerHTML = "Pista: " + data.pista;
+                document.getElementById('rol-text').innerHTML = '<span style="color:red">ERES EL IMPOSTOR</span>';
+                document.getElementById('pista-text').innerHTML = "Pista: " + data.pista;
             } else {
-                res.innerHTML = 'Tu Palabra: <br><span style="color:#00ff88">' + data.palabra + '</span>';
-                pst.innerHTML = "";
+                document.getElementById('rol-text').innerHTML = 'Tu Palabra: <br><span style="color:#00ff88">' + data.palabra + '</span>';
             }
             if(isAdmin) document.getElementById('btn-fin').classList.remove('hidden');
         });
-
         socket.on('reset', (data) => {
             alert("EL IMPOSTOR ERA: " + data.nombre + "\\nPALABRA: " + data.palabra);
             location.reload();
@@ -127,3 +107,40 @@ HTML_INDEX = """
     </script>
 </body>
 </html>
+"""
+
+@app.route('/')
+def index():
+    return render_template_string(HTML_INDEX)
+
+@socketio.on('connect')
+def on_connect():
+    emit('estado_servidor', {'encendido': game['encendido']})
+
+@socketio.on('activar')
+def on_activar():
+    game['encendido'] = True
+    socketio.emit('estado_servidor', {'encendido': True})
+
+@socketio.on('unirse')
+def on_unirse(data):
+    game['jugadores'][request.sid] = data['nombre']
+    socketio.emit('actualizar_lista', list(game['jugadores'].values()))
+
+@socketio.on('iniciar')
+def on_iniciar():
+    sids = list(game['jugadores'].keys())
+    if len(sids) < 2: return
+    game['impostor_sid'] = random.choice(sids)
+    game['palabra'], game['pista'] = random.choice(list(RECURSOS.items()))
+    for sid in sids:
+        rol = 'impostor' if sid == game['impostor_sid'] else 'civil'
+        socketio.emit('ver_rol', {'rol': rol, 'palabra': game['palabra'], 'pista': game['pista']}, room=sid)
+
+@socketio.on('finalizar')
+def on_finalizar():
+    nombre = game['jugadores'].get(game['impostor_sid'], "Desconocido")
+    socketio.emit('reset', {'nombre': nombre, 'palabra': game['palabra']})
+
+if __name__ == '__main__':
+    socketio.run(app, host='0.0.0.0', port=int(os.environ.get('PORT', 10000)))
